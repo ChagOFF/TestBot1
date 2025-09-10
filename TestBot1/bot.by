@@ -1,0 +1,271 @@
+﻿import telebot
+from datetime import datetime
+
+import os
+TOKEN = os.getenv("BOT_TOKEN")
+bot = telebot.TeleBot(TOKEN)
+
+# Хранилище данных пользователей (в реальном проекте — база данных!)
+users = {}
+# Хранилище заказов
+orders = []
+# Хранилище откликов
+responses = []
+
+# Состояния пользователей
+user_states = {}  # {user_id: 'waiting_city', 'waiting_fio', ...}
+
+# Главное меню
+def main_menu():
+    markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.add("Найти работу", "Найти мастера")
+    markup.add("Меню", "Мои чаты")
+    return markup
+
+# Команда /start
+@bot.message_handler(commands=['start'])
+def start(message):
+    user_id = message.chat.id
+    users[user_id] = {}
+    user_states[user_id] = None
+
+    bot.send_message(user_id, "Добро пожаловать в Сервис + Услуги!")
+    bot.send_message(user_id, "Выберите действие:", reply_markup=main_menu())
+
+# Обработка кнопок
+@bot.message_handler(func=lambda message: message.text in ["Найти работу", "Найти мастера", "Меню", "Мои чаты"])
+def handle_buttons(message):
+    user_id = message.chat.id
+
+    if message.text == "Найти работу":
+        bot.send_message(user_id, "Введите ваш город:")
+        user_states[user_id] = "waiting_master_city"
+
+    elif message.text == "Найти мастера":
+        bot.send_message(user_id, "Введите ваш город:")
+        user_states[user_id] = "waiting_customer_city"
+
+    elif message.text == "Меню":
+        bot.send_message(user_id, "Главное меню:", reply_markup=main_menu())
+
+    elif message.text == "Мои чаты":
+        show_chats(message)
+
+# === РЕГИСТРАЦИЯ МАСТЕРА ===
+@bot.message_handler(func=lambda message: user_states.get(message.chat.id) == "waiting_master_city")
+def master_city(message):
+    user_id = message.chat.id
+    users[user_id]['city'] = message.text
+    bot.send_message(user_id, "Введите ваше ФИО:")
+    user_states[user_id] = "waiting_master_fio"
+
+@bot.message_handler(func=lambda message: user_states.get(message.chat.id) == "waiting_master_fio")
+def master_fio(message):
+    user_id = message.chat.id
+    users[user_id]['fio'] = message.text
+    bot.send_message(user_id, "Введите ваш стаж (в годах):")
+    user_states[user_id] = "waiting_master_exp"
+
+@bot.message_handler(func=lambda message: user_states.get(message.chat.id) == "waiting_master_exp")
+def master_exp(message):
+    user_id = message.chat.id
+    users[user_id]['exp'] = message.text
+    users[user_id]['role'] = 'master'
+    bot.send_message(user_id, f"Регистрация завершена, {users[user_id]['fio']}!", reply_markup=main_menu())
+    user_states[user_id] = None
+
+# === РЕГИСТРАЦИЯ ЗАКАЗЧИКА ===
+@bot.message_handler(func=lambda message: user_states.get(message.chat.id) == "waiting_customer_city")
+def customer_city(message):
+    user_id = message.chat.id
+    users[user_id]['city'] = message.text
+    bot.send_message(user_id, "Введите ваше ФИО:")
+    user_states[user_id] = "waiting_customer_fio"
+
+@bot.message_handler(func=lambda message: user_states.get(message.chat.id) == "waiting_customer_fio")
+def customer_fio(message):
+    user_id = message.chat.id
+    users[user_id]['fio'] = message.text
+    users[user_id]['role'] = 'customer'
+    bot.send_message(user_id, "Нажмите кнопку, чтобы сформировать заказ:", reply_markup=telebot.types.ReplyKeyboardMarkup(resize_keyboard=True).add("Сформировать заказ"))
+    user_states[user_id] = "customer_ready"
+
+# === ФОРМИРОВАНИЕ ЗАКАЗА ===
+@bot.message_handler(func=lambda message: message.text == "Сформировать заказ" and user_states.get(message.chat.id) == "customer_ready")
+def start_order(message):
+    user_id = message.chat.id
+    bot.send_message(user_id, "Опишите работу (например, покрасить стены):")
+    user_states[user_id] = "waiting_order_desc"
+
+@bot.message_handler(func=lambda message: user_states.get(message.chat.id) == "waiting_order_desc")
+def order_desc(message):
+    user_id = message.chat.id
+    users[user_id]['order_desc'] = message.text
+    bot.send_message(user_id, "Введите желаемую дату начала работ (например, 10.04.2025):")
+    user_states[user_id] = "waiting_order_date"
+
+@bot.message_handler(func=lambda message: user_states.get(message.chat.id) == "waiting_order_date")
+def order_date(message):
+    user_id = message.chat.id
+    users[user_id]['order_date'] = message.text
+    bot.send_message(user_id, "Введите адрес:")
+    user_states[user_id] = "waiting_order_address"
+
+@bot.message_handler(func=lambda message: user_states.get(message.chat.id) == "waiting_order_address")
+def order_address(message):
+    user_id = message.chat.id
+    users[user_id]['order_address'] = message.text
+    markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.add("Да", "Нет")
+    bot.send_message(user_id, "Готовы ли предоставить инструменты?", reply_markup=markup)
+    user_states[user_id] = "waiting_order_tools"
+
+@bot.message_handler(func=lambda message: user_states.get(message.chat.id) == "waiting_order_tools")
+def order_tools(message):
+    user_id = message.chat.id
+    users[user_id]['order_tools'] = message.text
+    order = {
+        'customer_id': user_id,
+        'desc': users[user_id]['order_desc'],
+        'date': users[user_id]['order_date'],
+        'address': users[user_id]['order_address'],
+        'tools': users[user_id]['order_tools'],
+        'created_at': datetime.now().strftime("%d.%m.%Y %H:%M")
+    }
+    orders.append(order)
+    bot.send_message(user_id, "✅ Заказ сформирован!", reply_markup=main_menu())
+    user_states[user_id] = None
+
+    # Оповещение мастерам (упрощённо — только тем, кто уже зарегистрирован)
+    for uid, data in users.items():
+        if data.get('role') == 'master':
+            try:
+                bot.send_message(uid, f"🆕 Новый заказ: {order['desc']} в {order['date']}")
+                markup = telebot.types.InlineKeyboardMarkup()
+                markup.add(telebot.types.InlineKeyboardButton("Просмотреть заказ", callback_data=f"view_order_{len(orders)-1}"))
+                bot.send_message(uid, "Нажмите, чтобы посмотреть:", reply_markup=markup)
+            except:
+                pass
+
+# === ПРОСМОТР ЗАКАЗА МАСТЕРОМ ===
+@bot.callback_query_handler(func=lambda call: call.data.startswith("view_order_"))
+def view_order(call):
+    order_id = int(call.data.split("_")[-1])
+    order = orders[order_id]
+    text = f"📋 Заказ:\n{order['desc']}\nДата: {order['date']}\nАдрес: {order['address']}\nИнструменты: {order['tools']}"
+    
+    markup = telebot.types.InlineKeyboardMarkup()
+    markup.add(telebot.types.InlineKeyboardButton("Откликнуться", callback_data=f"respond_{order_id}"))
+    markup.add(telebot.types.InlineKeyboardButton("Просмотреть другие чаты заказчика", callback_data=f"chats_customer_{order['customer_id']}"))
+    
+    bot.send_message(call.message.chat.id, text, reply_markup=markup)
+
+# === ОТКЛИК МАСТЕРА ===
+@bot.callback_query_handler(func=lambda call: call.data.startswith("respond_"))
+def respond_to_order(call):
+    order_id = int(call.data.split("_")[-1])
+    order = orders[order_id]
+    customer_id = order['customer_id']
+    master_id = call.message.chat.id
+
+    bot.send_message(master_id, "У вас есть инструмент для выполнения работы? (Да/Нет)")
+    user_states[master_id] = f"waiting_response_tools_{order_id}"
+
+# Продолжение отклика
+@bot.message_handler(func=lambda message: user_states.get(message.chat.id, "").startswith("waiting_response_tools_"))
+def finish_response(message):
+    state = user_states[message.chat.id]
+    order_id = int(state.split("_")[-1])
+    master_id = message.chat.id
+    tools = message.text
+
+    # Сохраняем отклик
+    responses.append({
+        'order_id': order_id,
+        'master_id': master_id,
+        'tools': tools,
+        'timestamp': datetime.now().strftime("%d.%m.%Y %H:%M")
+    })
+
+    bot.send_message(master_id, "✅ Отклик отправлен!", reply_markup=main_menu())
+    user_states[master_id] = None
+
+    # Уведомляем заказчика
+    customer_id = orders[order_id]['customer_id']
+    try:
+        markup = telebot.types.InlineKeyboardMarkup()
+        markup.add(telebot.types.InlineKeyboardButton("Написать мастеру", callback_data=f"chat_{master_id}"))
+        markup.add(telebot.types.InlineKeyboardButton("Просмотреть другие чаты мастера", callback_data=f"chats_master_{master_id}"))
+        bot.send_message(customer_id, f"🔔 Мастер {users[master_id]['fio']} откликнулся на ваш заказ!", reply_markup=markup)
+    except:
+        pass
+
+# === МОИ ЧАТЫ ===
+def show_chats(message):
+    user_id = message.chat.id
+    role = users[user_id].get('role')
+    chats = []
+
+    if role == 'customer':
+        # Найти отклики на его заказы
+        for resp in responses:
+            if orders[resp['order_id']]['customer_id'] == user_id:
+                master = users[resp['master_id']]
+                order = orders[resp['order_id']]
+                chats.append({
+                    'name': master['fio'],
+                    'desc': order['desc'],
+                    'date': order['created_at']
+                })
+    elif role == 'master':
+        # Его отклики
+        for resp in responses:
+            if resp['master_id'] == user_id:
+                order = orders[resp['order_id']]
+                customer = users[order['customer_id']]
+                chats.append({
+                    'name': customer['fio'],
+                    'desc': order['desc'],
+                    'date': order['created_at']
+                })
+
+    if not chats:
+        bot.send_message(user_id, "У вас пока нет чатов.")
+        return
+
+    for chat in chats:
+        text = f"👤 {chat['name']}\n📝 {chat['desc']}\n📅 {chat['date']}"
+        bot.send_message(user_id, text)
+
+# === ОБМЕН СООБЩЕНИЯМИ (упрощённый чат) ===
+@bot.callback_query_handler(func=lambda call: call.data.startswith("chat_"))
+def open_chat(call):
+    other_id = int(call.data.split("_")[1])
+    user_id = call.message.chat.id
+
+    bot.send_message(user_id, f"Вы начали чат с {users[other_id]['fio']}. Пишите сообщение:")
+    user_states[user_id] = f"chatting_{other_id}"
+
+# Обработка сообщений в чате
+@bot.message_handler(func=lambda message: user_states.get(message.chat.id, "").startswith("chatting_"))
+def chat_message(message):
+    state = user_states[message.chat.id]
+    other_id = int(state.split("_")[1])
+    user_id = message.chat.id
+
+    # Пересылаем текст
+    try:
+        bot.send_message(other_id, f"📩 Сообщение от {users[user_id]['fio']}:\n{message.text}")
+    except:
+        bot.send_message(user_id, "Не удалось отправить сообщение.")
+
+    # Поддержка фото и видео
+    if message.content_type == 'photo':
+        file_id = message.photo[-1].file_id
+        bot.send_photo(other_id, file_id, caption=f"От {users[user_id]['fio']}")
+    elif message.content_type == 'video':
+        file_id = message.video.file_id
+        bot.send_video(other_id, file_id, caption=f"От {users[user_id]['fio']}")
+
+# Запуск
+bot.polling(none_stop=True)

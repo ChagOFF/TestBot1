@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: telegram-bot-service
+    runtime: python
+    region: frankfurt  # можно оставить по умолчанию
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: bash start.sh
+    envVars:
+      - key: BOT_TOKEN
+        generateValue: true
